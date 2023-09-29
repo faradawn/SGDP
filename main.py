@@ -20,9 +20,9 @@ parser = argparse.ArgumentParser()
 parser.add_argument('--batchSize', type=int,
                     default=128, help='input batch size')
 parser.add_argument('--hiddenSize', type=int,
-                    default=100, help='hidden state size')
-parser.add_argument('--epoch', type=int, default=5,
-                    help='the number of epochs to train for')
+                    default=200, help='hidden state size') # default is 100
+parser.add_argument('--epoch', type=int, default=2,
+                    help='the number of epochs to train for') # default is 5
 parser.add_argument('--lr', type=float, default=0.001,
                     help='learning rate')  # [0.001, 0.0005, 0.0001]
 parser.add_argument('--lr_dc', type=float, default=0.1,
@@ -100,7 +100,7 @@ def trace2input(dicts, trace, window_size=32):
     keys = bo_map.keys()
     inputs = []
     targets = []
-    for i in tqdm(range(len(trace)-window_size-1)):
+    for i in range(len(trace)-window_size-1):
 
         input_single = []
         for j in range(i, i+window_size+1):
@@ -116,50 +116,58 @@ def trace2input(dicts, trace, window_size=32):
 
 def dataset2input(dataset, window_size=32, method='top', top_num=1000):
     if method == 'top':
-        # print('\ntrain dataset, trace name:', dataset, '\n')
-        # Microsoft trace format: 
+        names = ['TimeStamp', 'ByteOffset']
+
+        # For Microsoft trace:
         # 0         1        2          3    4      5    6
         # Timestamp,Hostname,DiskNumber,Type,Offset,Size,ResponseTime
+        # lba_trace = '/home/cc/data/MSR-Cambridge/' + dataset
+        # df = pd.read_csv(lba_trace, engine='python', skiprows=1, header=None, na_values=['-1'], usecols=[0, 4], names=names)
 
-        lba_trace = '/home/cc/data/MSR-Cambridge/' + dataset
-        print('\nReading trace: ', lba_trace, '\n')
-        names = ['TimeStamp', 'ByteOffset']
-        df = pd.read_csv(lba_trace, engine='python', skiprows=1, header=None, na_values=[
-                         '-1'], usecols=[0, 4], names=names)
+        # For flashnet trace
+        # ts_record, dev_num, offset, size, io_type 
+        # 0          1        2       3     4
+        flashnet_prefix = '/home/cc/flashnet/model_collection/5_block_prefetching/dataset/iotrace/'
+        flashnet_suffix = '/read_io.trace'
+        lba_trace = flashnet_prefix + dataset + flashnet_suffix
+        df = pd.read_csv(lba_trace, engine='python', skiprows=1, header=None, na_values=['-1'], usecols=[0, 2], names=names)
+
+
+        # For Seagate trace
+        # time, dev, offset, size, readwrite
+        # 131054 0 17408 32768 1
+        # lba_trace = flashnet_prefix + dataset
+        # df = pd.read_csv(lba_trace, engine='python', skiprows=1, header=None, na_values=['-1'], usecols=[0, 2], names=names, sep=' ')
         
-        print("Printing dataframe")
-        print(df.head(3))
+        print('\nReading trace: ', lba_trace, '\n')
+        print("Length of trace", len(df))
+        # print(df.head(3))
 
         df = df.sort_values(by=['TimeStamp'])
         df.reset_index(inplace=True, drop=True)
 
-        train_trace = df[:int(len(df)*-opt.valid_portion)
-                         ]['ByteOffset'].tolist()
-        test_trace = df[int(len(df)*-opt.valid_portion) +
-                        1:]['ByteOffset'].tolist()
+        train_trace = df[:int(len(df)*-opt.valid_portion)]['ByteOffset'].tolist()
+        test_trace = df[int(len(df)*-opt.valid_portion)+1:]['ByteOffset'].tolist()
 
-        dicts = dict_generate(df, top_num=top_num)
+        dicts = dict_generate(df, top_num=top_num) # maps delta -> class
 
-        train_data = tuple(trace2input(
-            dicts, train_trace, window_size=window_size))
-        test_data = tuple(trace2input(
-            dicts, test_trace, window_size=window_size))
+        train_data = tuple(trace2input(dicts, train_trace, window_size=window_size)) # 
+        test_data = tuple(trace2input(dicts, test_trace, window_size=window_size))
 
         train_data = Data(train_data, shuffle=True)
         test_data = Data(test_data, shuffle=False)
 
+        # For train
         train_silces = train_data.generate_batch(opt.batchSize)
-        
         train_data_list = []
-
-        for i in tqdm(train_silces):
+        for i in train_silces:
             alias_inputs, A, items, mask, targets = train_data.get_slice(i)
             train_data_list.append((alias_inputs, A, items, mask, targets))
 
+        # For test
         test_silces = test_data.generate_batch(opt.batchSize)
         test_data_list = []
-
-        for i in tqdm(test_silces):
+        for i in test_silces:
             alias_inputs, A, items, mask, targets = test_data.get_slice(i)
             test_data_list.append((alias_inputs, A, items, mask, targets))
 
@@ -177,17 +185,19 @@ def single_cache_test(test_trace, all_pred, save_name, dicts):
     # maxsize = [5] + \
         # [i*10 for i in range(1, 10)] + [i*100 for i in range(1, 11)]
     
-    maxsize = [10, 100, 1000]
+    maxsize = [1000]
 
     for i in range(len(maxsize)):
         caches["LRU"+str(maxsize[i])] = CacheTest(maxsize[i])
 
     print("single test len", len(test_trace))
-    for i in tqdm(range(0, len(test_trace))):
+    for i in range(0, len(test_trace)):
         for name, cache in caches.items():
             cache.push_normal(test_trace[i])
+            print(f"i {i}, requesting {test_trace[i]}", end=' ')
             if all_pred[i][0] > 0:
                 cache.push_prefetch(test_trace[i] - operation_id_map_div[bo_map_div[all_pred[i][0]-1]])###
+                print(f", prefetch {test_trace[i] - operation_id_map_div[bo_map_div[all_pred[i][0]-1]]}")
 
     for name, cache in caches.items():
         print(format(cache.get_hit_rate(), '.4f'), format(cache.get_prehit_rate(), '.4f'), '\t', name)
@@ -221,7 +231,15 @@ def score_compute(all_preds, all_targets, save_name):
 
     
 def main():
-    dataset_col = ['proj_0_1000.csv']#'ftds_0802_1021_trace','ftds_0805_17_trace',
+    # dataset_col = ['proj_0_1000.csv'] # MSR raw
+
+    # dataset_col = ['msr.cut.per_50k.rw_78_22.200'] # MSR flashnet cut
+    # dataset_col = ['seagate.16k.all_read.fio_90seq_10rand_256k_8q_reads_8_lun_10min_container192_filtered']
+    # dataset_col = ['tencent.cut.per_100k.most_size_thpt.109'] # msr.cut.per_50k.rw_78_22.200 # alibaba.cut.per_50k.rw_27_73.140
+    # dataset_col = ['alibaba.cut.per_50k.rw_27_73.140'] #alibaba.cut.per_10k.most_size_thpt_iops_rand.719
+    dataset_col = ['alibaba.cut.per_10k.most_size_thpt_iops_rand.719'] 
+ 
+
     deviceID = 0 # only one GPU
     os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
     os.environ['CUDA_VISIBLE_DEVICES'] = str(deviceID)
@@ -241,10 +259,10 @@ def main():
         print('\n=== Start training, model_path:', model_path)
         for epoch in range(opt.epoch):
             print('===== epoch:', epoch)
-            print('start training: ')
+            # print('start training: ')
             all_pred, all_targets = train_test_pred(model, train_data_list, train_silces, test_data_list, test_silces)
 
-            print('start cache test: ')
+            # print('start cache test: ')
             save_name = dataset+'_'+str(epoch)+'_epoch'
             
             _ = single_cache_test(test_trace=test_trace[opt.window:-1], all_pred=all_pred, save_name=save_name, dicts=dicts)

@@ -127,16 +127,16 @@ def train_test_pred(model,train_data_list,train_silces,test_data_list,test_silce
         loss.backward()
         model.optimizer.step()
         total_loss += loss
-        print('[%d/%d] Loss: %.4f' % (j, len(train_silces), loss.item()),end='\r')
-        if j % int(len(train_silces) / 5 + 1) == 0:
-            print('[%d/%d] Loss: %.4f' % (j, len(train_silces), loss.item()))
-    print('\tLoss: %.3f' % total_loss)
+        # print('[%d/%d] Loss: %.4f' % (j, len(train_silces), loss.item()),end='\r')
+        # if j % int(len(train_silces) / 5 + 1) == 0:
+            # print('[%d/%d] Loss: %.4f' % (j, len(train_silces), loss.item()))
+    print('\tTotal loss: %.3f' % total_loss)
     model.scheduler.step()
     model.eval()
     with torch.no_grad():
         all_targets = []
         all_pred=[]
-        for test_data,i in tqdm(zip(test_data_list,test_silces)):
+        for test_data,i in zip(test_data_list,test_silces):
             targets, scores = forward(model, i, test_data)
             sub_scores = scores.topk(top_k)[1]
             sub_scores = trans_to_cpu(sub_scores).detach().numpy()

@@ -1,4 +1,12 @@
-### Introduction of Code Demo and Appendix
+# Graph based prefetcher
+
+## How to use
+python main.py --hiddenSize 200 --epoch 1
+
+## All traces 
+/home/cc/flashnet/model_collection/5_block_prefetching/dataset/iotrace/
+
+## Introduction of Code Demo and Appendix
 
 There are seven python files in this folders. 
 
